@@ -8,13 +8,8 @@ import { JwtService } from '@nestjs/jwt';
 import { Reflector } from '@nestjs/core';
 import { Request } from 'express';
 import { PrismaService } from '../../prisma/prisma.service';
-import {
-  AuthenticatedUser,
-  JwtPayload,
-} from '../interfaces/auth.interface';
-import {
-  IS_PUBLIC_KEY,
-} from '../decorators/public.decorator';
+import { AuthenticatedUser, JwtPayload } from '../interfaces/auth.interface';
+import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 
 interface AuthenticatedRequest extends Request {
   user?: AuthenticatedUser;
@@ -28,47 +23,34 @@ export class JwtAuthGuard implements CanActivate {
     private readonly prisma: PrismaService,
   ) {}
 
-  async canActivate(
-    context: ExecutionContext,
-  ): Promise<boolean> {
-    const isPublic = this.reflector.getAllAndOverride<boolean>(
-      IS_PUBLIC_KEY,
-      [
-        context.getHandler(),
-        context.getClass(),
-      ],
-    );
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
 
     if (isPublic) {
       return true;
     }
 
-    const request =
-      context.switchToHttp().getRequest<AuthenticatedRequest>();
+    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
 
     const token = this.extractBearerToken(request);
 
     if (!token) {
-      throw new UnauthorizedException(
-        'Authentication is required',
-      );
+      throw new UnauthorizedException('Authentication is required');
     }
 
     let payload: JwtPayload;
 
     try {
-      payload =
-        await this.jwtService.verifyAsync<JwtPayload>(token);
+      payload = await this.jwtService.verifyAsync<JwtPayload>(token);
     } catch {
-      throw new UnauthorizedException(
-        'Invalid or expired access token',
-      );
+      throw new UnauthorizedException('Invalid or expired access token');
     }
 
     if (!payload.sub) {
-      throw new UnauthorizedException(
-        'Invalid access token payload',
-      );
+      throw new UnauthorizedException('Invalid access token payload');
     }
 
     const user = await this.prisma.user.findUnique({
@@ -94,9 +76,7 @@ export class JwtAuthGuard implements CanActivate {
     return true;
   }
 
-  private extractBearerToken(
-    request: Request,
-  ): string | undefined {
+  private extractBearerToken(request: Request): string | undefined {
     const authorization = request.headers.authorization;
 
     if (!authorization) {

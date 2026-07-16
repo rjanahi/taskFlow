@@ -7,18 +7,12 @@ import {
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 
-import {
-  HttpExceptionFilter,
-} from './common/filters/http-exception.filter';
+import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
-function formatValidationErrors(
-  errors: ValidationError[],
-) {
+function formatValidationErrors(errors: ValidationError[]) {
   return errors.map((validationError) => ({
     field: validationError.property,
-    messages: Object.values(
-      validationError.constraints ?? {},
-    ),
+    messages: Object.values(validationError.constraints ?? {}),
   }));
 }
 
@@ -28,9 +22,7 @@ async function bootstrap(): Promise<void> {
   app.setGlobalPrefix('api');
 
   app.enableCors({
-    origin:
-      process.env.FRONTEND_URL ??
-      'http://localhost:3000',
+    origin: process.env.FRONTEND_URL ?? 'http://localhost:3000',
   });
 
   app.useGlobalPipes(
@@ -38,9 +30,7 @@ async function bootstrap(): Promise<void> {
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
-      exceptionFactory: (
-        errors: ValidationError[],
-      ) =>
+      exceptionFactory: (errors: ValidationError[]) =>
         new BadRequestException({
           message: 'Validation failed',
           details: formatValidationErrors(errors),
@@ -54,9 +44,7 @@ async function bootstrap(): Promise<void> {
 
   await app.listen(port);
 
-  console.log(
-    `API running at http://localhost:${port}/api`,
-  );
+  console.log(`API running at http://localhost:${port}/api`);
 }
 
 void bootstrap();

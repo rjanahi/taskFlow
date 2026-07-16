@@ -5,16 +5,11 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { compare, hash } from 'bcryptjs';
-import {
-  Role,
-} from '../generated/prisma/client';
+import { Role } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
-import {
-  AuthResponse,
-  AuthenticatedUser,
-} from './interfaces/auth.interface';
+import { AuthResponse, AuthenticatedUser } from './interfaces/auth.interface';
 
 const safeUserSelect = {
   id: true,
@@ -30,32 +25,24 @@ export class AuthService {
     private readonly jwtService: JwtService,
   ) {}
 
-  async register(
-    registerDto: RegisterDto,
-  ): Promise<AuthResponse> {
+  async register(registerDto: RegisterDto): Promise<AuthResponse> {
     const email = registerDto.email.trim().toLowerCase();
     const name = registerDto.name.trim();
 
-    const existingUser =
-      await this.prisma.user.findUnique({
-        where: {
-          email,
-        },
-        select: {
-          id: true,
-        },
-      });
+    const existingUser = await this.prisma.user.findUnique({
+      where: {
+        email,
+      },
+      select: {
+        id: true,
+      },
+    });
 
     if (existingUser) {
-      throw new ConflictException(
-        'An account with this email already exists',
-      );
+      throw new ConflictException('An account with this email already exists');
     }
 
-    const passwordHash = await hash(
-      registerDto.password,
-      12,
-    );
+    const passwordHash = await hash(registerDto.password, 12);
 
     const user = await this.prisma.user.create({
       data: {
@@ -80,20 +67,13 @@ export class AuthService {
     });
 
     if (!user) {
-      throw new UnauthorizedException(
-        'Invalid email or password',
-      );
+      throw new UnauthorizedException('Invalid email or password');
     }
 
-    const passwordMatches = await compare(
-      loginDto.password,
-      user.passwordHash,
-    );
+    const passwordMatches = await compare(loginDto.password, user.passwordHash);
 
     if (!passwordMatches) {
-      throw new UnauthorizedException(
-        'Invalid email or password',
-      );
+      throw new UnauthorizedException('Invalid email or password');
     }
 
     return this.createAuthResponse({

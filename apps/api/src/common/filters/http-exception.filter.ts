@@ -24,9 +24,7 @@ const errorNames: Record<number, string> = {
 };
 
 @Catch()
-export class HttpExceptionFilter
-  implements ExceptionFilter
-{
+export class HttpExceptionFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost): void {
     const context = host.switchToHttp();
 
@@ -39,8 +37,7 @@ export class HttpExceptionFilter
         : HttpStatus.INTERNAL_SERVER_ERROR;
 
     let message = 'An unexpected error occurred';
-    let error =
-      errorNames[status] ?? 'Request Error';
+    let error = errorNames[status] ?? 'Request Error';
     let details: unknown;
 
     if (exception instanceof HttpException) {
@@ -49,8 +46,7 @@ export class HttpExceptionFilter
       if (typeof exceptionResponse === 'string') {
         message = exceptionResponse;
       } else {
-        const body =
-          exceptionResponse as ExceptionResponseBody;
+        const body = exceptionResponse as ExceptionResponseBody;
 
         if (Array.isArray(body.message)) {
           message = 'Validation failed';
