@@ -1,4 +1,11 @@
 node_modules/
 .next/
 dist/
+
+# Environment files
 .env
+.env.*
+!.env.example
+
+# Generated Prisma client
+apps/api/src/generated/prisma/
