@@ -9,3 +9,7 @@ dist/
 
 # Generated Prisma client
 apps/api/src/generated/prisma/
+
+# Uploaded work item attachments
+apps/api/storage/attachments/*
+!apps/api/storage/attachments/.gitkeep

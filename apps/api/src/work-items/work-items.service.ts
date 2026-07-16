@@ -2,17 +2,24 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import { access, mkdir, unlink, writeFile } from 'node:fs/promises';
+import { join, relative, resolve, sep } from 'node:path';
 import {
   ActivityAction,
   Prisma,
-  Priority,
   Role,
   WorkItemStatus,
 } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/interfaces/auth.interface';
+import {
+  ATTACHMENT_EXTENSION_BY_MIME_TYPE,
+  ATTACHMENT_STORAGE_DIRECTORY,
+} from './attachments.constants';
 import { CreateWorkItemDto } from './dto/create-work-item.dto';
 import { UpdateWorkItemDto } from './dto/update-work-item.dto';
 import { WorkItemQueryDto } from './dto/work-item-query.dto';
@@ -133,6 +140,26 @@ type WorkItemWithDueDate = {
   dueDate: Date;
   status: WorkItemStatus;
 };
+
+type WorkItemForResponse = WorkItemWithDueDate & {
+  id: string;
+
+  attachment: {
+    id: string;
+    originalName: string;
+    mimeType: string;
+    sizeBytes: number;
+    createdAt: Date;
+    updatedAt: Date;
+  } | null;
+};
+
+interface AttachmentFile {
+  absolutePath: string;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+}
 
 @Injectable()
 export class WorkItemsService {
@@ -282,13 +309,39 @@ export class WorkItemsService {
   async remove(id: string, currentUser: AuthenticatedUser): Promise<void> {
     this.assertManager(currentUser);
 
-    await this.ensureItemExists(id);
+    const workItem = await this.prisma.workItem.findUnique({
+      where: {
+        id,
+      },
+
+      select: {
+        id: true,
+
+        attachment: {
+          select: {
+            storagePath: true,
+          },
+        },
+      },
+    });
+
+    if (!workItem) {
+      throw new NotFoundException('Work item not found');
+    }
 
     await this.prisma.workItem.delete({
       where: {
         id,
       },
     });
+
+    if (workItem.attachment) {
+      const absolutePath = this.resolveAttachmentPath(
+        workItem.attachment.storagePath,
+      );
+
+      await this.safeUnlink(absolutePath);
+    }
   }
 
   private buildWorkItemFilter(
@@ -380,9 +433,17 @@ export class WorkItemsService {
     }
   }
 
-  private addCalculatedFields<T extends WorkItemWithDueDate>(workItem: T) {
+  private addCalculatedFields<T extends WorkItemForResponse>(workItem: T) {
     return {
       ...workItem,
+
+      attachment: workItem.attachment
+        ? {
+            ...workItem.attachment,
+            fileUrl: `/api/work-items/${workItem.id}/attachment`,
+          }
+        : null,
+
       isOverdue: this.isOverdue(workItem),
     };
   }
@@ -393,5 +454,265 @@ export class WorkItemsService {
       workItem.status === WorkItemStatus.CANCELLED;
 
     return !isComplete && workItem.dueDate < new Date();
+  }
+
+  async uploadAttachment(
+    id: string,
+    file: Express.Multer.File,
+    currentUser: AuthenticatedUser,
+  ) {
+    this.assertManager(currentUser);
+
+    const workItem = await this.prisma.workItem.findUnique({
+      where: {
+        id,
+      },
+      select: {
+        id: true,
+
+        attachment: {
+          select: {
+            storagePath: true,
+          },
+        },
+      },
+    });
+
+    if (!workItem) {
+      throw new NotFoundException('Work item not found');
+    }
+
+    const extension = ATTACHMENT_EXTENSION_BY_MIME_TYPE[file.mimetype];
+
+    if (!extension) {
+      throw new BadRequestException(
+        'Only JPEG, PNG and WebP images are allowed',
+      );
+    }
+
+    await mkdir(ATTACHMENT_STORAGE_DIRECTORY, {
+      recursive: true,
+    });
+
+    const storedName = `${randomUUID()}.${extension}`;
+
+    const absolutePath = join(ATTACHMENT_STORAGE_DIRECTORY, storedName);
+
+    const storagePath = relative(process.cwd(), absolutePath);
+
+    await writeFile(absolutePath, file.buffer, {
+      flag: 'wx',
+    });
+
+    try {
+      const attachment = await this.prisma.$transaction(async (transaction) => {
+        const savedAttachment = await transaction.attachment.upsert({
+          where: {
+            workItemId: id,
+          },
+
+          create: {
+            originalName: file.originalname,
+            storedName,
+            mimeType: file.mimetype,
+            sizeBytes: file.size,
+            storagePath,
+            workItemId: id,
+            uploadedById: currentUser.id,
+          },
+
+          update: {
+            originalName: file.originalname,
+            storedName,
+            mimeType: file.mimetype,
+            sizeBytes: file.size,
+            storagePath,
+            uploadedById: currentUser.id,
+          },
+
+          select: attachmentSummarySelect,
+        });
+
+        await transaction.activity.create({
+          data: {
+            workItemId: id,
+            actorId: currentUser.id,
+
+            action: workItem.attachment
+              ? ActivityAction.ATTACHMENT_REPLACED
+              : ActivityAction.ATTACHMENT_ADDED,
+
+            details: {
+              originalName: file.originalname,
+              mimeType: file.mimetype,
+              sizeBytes: file.size,
+            },
+          },
+        });
+
+        return savedAttachment;
+      });
+
+      if (workItem.attachment) {
+        const previousAbsolutePath = this.resolveAttachmentPath(
+          workItem.attachment.storagePath,
+        );
+
+        await this.safeUnlink(previousAbsolutePath);
+      }
+
+      return {
+        ...attachment,
+        fileUrl: `/api/work-items/${id}/attachment`,
+      };
+    } catch (error: unknown) {
+      await this.safeUnlink(absolutePath);
+      throw error;
+    }
+  }
+
+  async getAttachmentFile(
+    id: string,
+    currentUser: AuthenticatedUser,
+  ): Promise<AttachmentFile> {
+    const workItem = await this.prisma.workItem.findFirst({
+      where: this.buildAccessibleItemFilter(id, currentUser),
+
+      select: {
+        attachment: {
+          select: {
+            originalName: true,
+            mimeType: true,
+            sizeBytes: true,
+            storagePath: true,
+          },
+        },
+      },
+    });
+
+    if (!workItem?.attachment) {
+      throw new NotFoundException('Attachment not found');
+    }
+
+    const absolutePath = this.resolveAttachmentPath(
+      workItem.attachment.storagePath,
+    );
+
+    try {
+      await access(absolutePath);
+    } catch (error: unknown) {
+      if (this.getNodeErrorCode(error) === 'ENOENT') {
+        throw new NotFoundException('Attachment file not found');
+      }
+
+      throw new InternalServerErrorException(
+        'The attachment could not be accessed',
+      );
+    }
+
+    return {
+      absolutePath,
+      originalName: workItem.attachment.originalName,
+      mimeType: workItem.attachment.mimeType,
+      sizeBytes: workItem.attachment.sizeBytes,
+    };
+  }
+
+  async removeAttachment(
+    id: string,
+    currentUser: AuthenticatedUser,
+  ): Promise<void> {
+    this.assertManager(currentUser);
+
+    const workItem = await this.prisma.workItem.findUnique({
+      where: {
+        id,
+      },
+
+      select: {
+        id: true,
+
+        attachment: {
+          select: {
+            originalName: true,
+            storagePath: true,
+          },
+        },
+      },
+    });
+
+    if (!workItem) {
+      throw new NotFoundException('Work item not found');
+    }
+
+    if (!workItem.attachment) {
+      throw new NotFoundException('Attachment not found');
+    }
+
+    await this.prisma.$transaction(async (transaction) => {
+      await transaction.attachment.delete({
+        where: {
+          workItemId: id,
+        },
+      });
+
+      await transaction.activity.create({
+        data: {
+          workItemId: id,
+          actorId: currentUser.id,
+          action: ActivityAction.ATTACHMENT_REMOVED,
+
+          details: {
+            originalName: workItem.attachment?.originalName,
+          },
+        },
+      });
+    });
+
+    const absolutePath = this.resolveAttachmentPath(
+      workItem.attachment.storagePath,
+    );
+
+    await this.safeUnlink(absolutePath);
+  }
+
+  private resolveAttachmentPath(storagePath: string): string {
+    const storageRoot = resolve(ATTACHMENT_STORAGE_DIRECTORY);
+
+    const absolutePath = resolve(process.cwd(), storagePath);
+
+    const isInsideStorage = absolutePath.startsWith(`${storageRoot}${sep}`);
+
+    if (!isInsideStorage) {
+      throw new InternalServerErrorException('Invalid attachment storage path');
+    }
+
+    return absolutePath;
+  }
+
+  private async safeUnlink(absolutePath: string): Promise<void> {
+    try {
+      await unlink(absolutePath);
+    } catch (error: unknown) {
+      if (this.getNodeErrorCode(error) === 'ENOENT') {
+        return;
+      }
+
+      console.warn(`Unable to delete attachment file: ${absolutePath}`, error);
+    }
+  }
+
+  private getNodeErrorCode(error: unknown): string | undefined {
+    if (typeof error === 'object' && error !== null && 'code' in error) {
+      const code = (
+        error as {
+          code?: unknown;
+        }
+      ).code;
+
+      return typeof code === 'string' ? code : undefined;
+    }
+
+    return undefined;
   }
 }
