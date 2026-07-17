@@ -176,8 +176,6 @@ PORT=3001
 NODE_ENV="development"
 ```
 
-Do not commit the real `.env` file.
-
 ### Frontend
 
 Copy the frontend example:
