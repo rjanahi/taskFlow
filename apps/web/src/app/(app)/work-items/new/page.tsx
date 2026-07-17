@@ -15,7 +15,7 @@ import {
 } from 'next/navigation';
 import {
   workItemKeys,
-} from '@/hooks/use-work-items-ts';
+} from '@/hooks/use-work-items';
 import {
   getErrorMessage,
 } from '@/lib/errors';

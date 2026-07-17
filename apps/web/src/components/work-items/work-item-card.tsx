@@ -7,6 +7,7 @@ import {
 import {
   WorkItemSummary,
 } from '@/types/work-item';
+import Link from 'next/link';
 
 interface WorkItemCardProps {
   item: WorkItemSummary;
@@ -137,6 +138,15 @@ export function WorkItemCard({
           </span>
         </div>
       ) : null}
+
+        <div className="mt-5 border-t border-slate-100 pt-4">
+            <Link
+                href={`/work-items/${item.id}`}
+                className="text-sm font-semibold text-slate-900 underline"
+            >
+                View details
+            </Link>
+        </div>
     </article>
   );
 }

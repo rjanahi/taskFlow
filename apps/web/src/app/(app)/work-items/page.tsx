@@ -13,7 +13,7 @@ import {
 import {
   useMembers,
   useWorkItems,
-} from '@/hooks/use-work-items-ts';
+} from '@/hooks/use-work-items';
 import {
   getErrorMessage,
 } from '@/lib/errors';

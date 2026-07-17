@@ -26,19 +26,20 @@ const apiUrl = (
   'http://localhost:3001/api'
 ).replace(/\/$/, '');
 
-export async function apiRequest<T>(
-  path: string,
-  options: RequestInit = {},
-): Promise<T> {
-  const token = getAccessToken();
-
+function createHeaders(
+  options: RequestInit,
+): Headers {
   const headers = new Headers(
     options.headers,
   );
 
+  const isFormData =
+    typeof FormData !== 'undefined' &&
+    options.body instanceof FormData;
+
   if (
     options.body &&
-    !(options.body instanceof FormData) &&
+    !isFormData &&
     !headers.has('Content-Type')
   ) {
     headers.set(
@@ -47,6 +48,8 @@ export async function apiRequest<T>(
     );
   }
 
+  const token = getAccessToken();
+
   if (token) {
     headers.set(
       'Authorization',
@@ -54,37 +57,50 @@ export async function apiRequest<T>(
     );
   }
 
+  return headers;
+}
+
+async function throwApiError(
+  response: Response,
+): Promise<never> {
+  const errorBody =
+    await readErrorBody(response);
+
+  if (response.status === 401) {
+    clearAccessToken();
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new Event(
+          'taskflow:unauthorized',
+        ),
+      );
+    }
+  }
+
+  throw new ApiError(
+    response.status,
+    errorBody.message ??
+      `Request failed with status ${response.status}`,
+    errorBody.details,
+  );
+}
+
+export async function apiRequest<T>(
+  path: string,
+  options: RequestInit = {},
+): Promise<T> {
   const response = await fetch(
     `${apiUrl}${path}`,
     {
       ...options,
-      headers,
+      headers: createHeaders(options),
       cache: 'no-store',
     },
   );
 
   if (!response.ok) {
-    const errorBody =
-      await readErrorBody(response);
-
-    if (response.status === 401) {
-      clearAccessToken();
-
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(
-          new Event(
-            'taskflow:unauthorized',
-          ),
-        );
-      }
-    }
-
-    throw new ApiError(
-      response.status,
-      errorBody.message ??
-        `Request failed with status ${response.status}`,
-      errorBody.details,
-    );
+    return throwApiError(response);
   }
 
   if (response.status === 204) {
@@ -92,6 +108,26 @@ export async function apiRequest<T>(
   }
 
   return response.json() as Promise<T>;
+}
+
+export async function apiRequestBlob(
+  path: string,
+  options: RequestInit = {},
+): Promise<Blob> {
+  const response = await fetch(
+    `${apiUrl}${path}`,
+    {
+      ...options,
+      headers: createHeaders(options),
+      cache: 'no-store',
+    },
+  );
+
+  if (!response.ok) {
+    return throwApiError(response);
+  }
+
+  return response.blob();
 }
 
 async function readErrorBody(
