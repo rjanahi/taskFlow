@@ -2,7 +2,6 @@
 
 import {
   FormEvent,
-  useEffect,
   useState,
 } from 'react';
 import {
@@ -34,7 +33,18 @@ interface WorkItemEditPanelProps {
   item: WorkItemDetail;
 }
 
-export function WorkItemEditPanel({
+export function WorkItemEditPanel(
+  props: WorkItemEditPanelProps,
+) {
+  return (
+    <WorkItemEditPanelForm
+      key={props.item.id}
+      {...props}
+    />
+  );
+}
+
+function WorkItemEditPanelForm({
   item,
 }: WorkItemEditPanelProps) {
   const router = useRouter();
@@ -64,20 +74,6 @@ export function WorkItemEditPanel({
         item.dueDate,
       ),
     );
-
-  useEffect(() => {
-    setTitle(item.title);
-    setDescription(
-      item.description,
-    );
-    setPriority(item.priority);
-    setCategory(item.category);
-    setDueDate(
-      toDateTimeLocalValue(
-        item.dueDate,
-      ),
-    );
-  }, [item]);
 
   const updateMutation =
     useMutation({

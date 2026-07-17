@@ -2,7 +2,7 @@
 
 import {
   FormEvent,
-  useEffect,
+  useMemo,
   useState,
 } from 'react';
 import {
@@ -223,8 +223,28 @@ export function TimeExtensionPanel({
   const queryClient =
     useQueryClient();
 
-  const [proposedDueDate, setProposedDueDate] =
-    useState('');
+  const suggestedDueDate = useMemo(() => {
+  const currentDueDate =
+    new Date(item.dueDate);
+
+  const suggestedDate = new Date(
+    currentDueDate.getTime() +
+      24 * 60 * 60 * 1000,
+  );
+
+  return toDateTimeLocalValue(
+    suggestedDate,
+  );
+}, [item.dueDate]);
+
+const [
+  proposedDueDateOverride,
+  setProposedDueDateOverride,
+] = useState<string | null>(null);
+
+const proposedDueDate =
+  proposedDueDateOverride ??
+  suggestedDueDate;
 
   const [reason, setReason] =
     useState('');
@@ -253,23 +273,6 @@ export function TimeExtensionPanel({
         request.status ===
         'PENDING',
     );
-
-  useEffect(() => {
-    const currentDueDate =
-      new Date(item.dueDate);
-
-    const suggestedDate =
-      new Date(
-        currentDueDate.getTime() +
-          24 * 60 * 60 * 1000,
-      );
-
-    setProposedDueDate(
-      toDateTimeLocalValue(
-        suggestedDate,
-      ),
-    );
-  }, [item.dueDate]);
 
   const requestMutation =
     useMutation({
@@ -388,9 +391,8 @@ export function TimeExtensionPanel({
                     proposedDueDate
                   }
                   onChange={(event) =>
-                    setProposedDueDate(
-                      event.target
-                        .value,
+                    setProposedDueDateOverride(
+                      event.target.value,
                     )
                   }
                   className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"

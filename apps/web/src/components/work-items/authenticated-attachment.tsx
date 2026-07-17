@@ -3,7 +3,7 @@
 import Image from 'next/image';
 import {
   useEffect,
-  useState,
+  useMemo,
 } from 'react';
 import {
   useQuery,
@@ -30,8 +30,8 @@ export function AuthenticatedAttachment({
   workItemId,
   attachment,
 }: AuthenticatedAttachmentProps) {
-  const [objectUrl, setObjectUrl] =
-    useState<string | null>(null);
+
+  
 
   const attachmentQuery = useQuery({
     queryKey:
@@ -46,21 +46,25 @@ export function AuthenticatedAttachment({
       ),
   });
 
-  useEffect(() => {
-    if (!attachmentQuery.data) {
-      return;
-    }
+  const objectUrl = useMemo(() => {
+  if (!attachmentQuery.data) {
+    return null;
+  }
 
-    const url = URL.createObjectURL(
-      attachmentQuery.data,
-    );
+  return URL.createObjectURL(
+    attachmentQuery.data,
+  );
+}, [attachmentQuery.data]);
 
-    setObjectUrl(url);
+useEffect(() => {
+  if (!objectUrl) {
+    return;
+  }
 
-    return () => {
-      URL.revokeObjectURL(url);
-    };
-  }, [attachmentQuery.data]);
+  return () => {
+    URL.revokeObjectURL(objectUrl);
+  };
+}, [objectUrl]);
 
   if (attachmentQuery.isPending) {
     return (

@@ -1,7 +1,6 @@
 'use client';
 
 import {
-  useEffect,
   useMemo,
   useState,
 } from 'react';
@@ -48,12 +47,16 @@ export function AssignmentManager({
     [item.assignments],
   );
 
-  const [selectedIds, setSelectedIds] =
-    useState<string[]>(currentIds);
+  const [selection, setSelection] =
+    useState<{
+      itemId: string;
+      ids: string[];
+    } | null>(null);
 
-  useEffect(() => {
-    setSelectedIds(currentIds);
-  }, [currentIds]);
+  const selectedIds =
+    selection?.itemId === item.id
+      ? selection.ids
+      : currentIds;
 
   const assignmentMutation =
     useMutation({
@@ -64,12 +67,11 @@ export function AssignmentManager({
         ),
 
       onSuccess: async () => {
-        await queryClient.invalidateQueries(
-          {
-            queryKey:
-              workItemKeys.all,
-          },
-        );
+        await queryClient.invalidateQueries({
+          queryKey: workItemKeys.all,
+        });
+
+        setSelection(null);
       },
     });
 
@@ -86,20 +88,30 @@ export function AssignmentManager({
   function toggleMember(
     memberId: string,
   ): void {
-    setSelectedIds(
-      (currentSelection) =>
-        currentSelection.includes(
+    setSelection((currentSelection) => {
+      const currentSelectionIds =
+        currentSelection?.itemId ===
+        item.id
+          ? currentSelection.ids
+          : currentIds;
+
+      const ids =
+        currentSelectionIds.includes(
           memberId,
         )
-          ? currentSelection.filter(
-              (id) =>
-                id !== memberId,
+          ? currentSelectionIds.filter(
+              (id) => id !== memberId,
             )
           : [
-              ...currentSelection,
+              ...currentSelectionIds,
               memberId,
-            ],
-    );
+            ];
+
+      return {
+        itemId: item.id,
+        ids,
+      };
+    });
   }
 
   return (
