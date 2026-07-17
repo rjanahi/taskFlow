@@ -5,18 +5,38 @@ import { AppService } from './app.service';
 describe('AppController', () => {
   let appController: AppController;
 
+  const appServiceMock = {
+    getHealth: jest.fn(),
+  };
+
   beforeEach(async () => {
+    jest.clearAllMocks();
+
     const app: TestingModule = await Test.createTestingModule({
       controllers: [AppController],
-      providers: [AppService],
+      providers: [
+        {
+          provide: AppService,
+          useValue: appServiceMock,
+        },
+      ],
     }).compile();
 
     appController = app.get<AppController>(AppController);
   });
 
-  describe('root', () => {
-    it('should return "Hello World!"', () => {
-      expect(appController.getHello()).toBe('Hello World!');
+  describe('getHealth', () => {
+    it('should return the application health status', async () => {
+      const healthResponse = {
+        status: 'ok',
+        database: 'connected',
+        userCount: 3,
+      };
+
+      appServiceMock.getHealth.mockResolvedValue(healthResponse);
+
+      await expect(appController.getHealth()).resolves.toEqual(healthResponse);
+      expect(appServiceMock.getHealth).toHaveBeenCalledTimes(1);
     });
   });
 });
