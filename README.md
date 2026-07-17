@@ -527,18 +527,3 @@ Dates are stored and transferred as UTC timestamps. Browser controls display and
 * Browser-level end-to-end tests
 * Production object storage
 * CI deployment pipeline
-
-## Verification
-
-Before submission, run:
-
-```bash
-npm install
-docker compose up -d --wait postgres postgres_test
-npm run lint
-npm run test
-npm run build
-git status --short
-```
-
-The final command should show no unintended uncommitted files.
