@@ -10,6 +10,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Put,
   Query,
   StreamableFile,
   UploadedFile,
@@ -29,6 +30,7 @@ import {
 import { CreateWorkItemDto } from './dto/create-work-item.dto';
 import { UpdateWorkItemDto } from './dto/update-work-item.dto';
 import { WorkItemQueryDto } from './dto/work-item-query.dto';
+import { AssignWorkItemDto } from './dto/assign-work-item.dto';
 import { WorkItemsService } from './work-items.service';
 
 function sanitizeDownloadFilename(filename: string): string {
@@ -117,6 +119,20 @@ export class WorkItemsController {
     @CurrentUser() currentUser: AuthenticatedUser,
   ): Promise<void> {
     return this.workItemsService.removeAttachment(id, currentUser);
+  }
+
+  @Put(':id/assignees')
+  @Roles(Role.MANAGER)
+  assignMembers(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() assignWorkItemDto: AssignWorkItemDto,
+    @CurrentUser() currentUser: AuthenticatedUser,
+  ) {
+    return this.workItemsService.assignMembers(
+      id,
+      assignWorkItemDto,
+      currentUser,
+    );
   }
 
   @Get(':id')

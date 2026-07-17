@@ -23,6 +23,7 @@ import {
 import { CreateWorkItemDto } from './dto/create-work-item.dto';
 import { UpdateWorkItemDto } from './dto/update-work-item.dto';
 import { WorkItemQueryDto } from './dto/work-item-query.dto';
+import { AssignWorkItemDto } from './dto/assign-work-item.dto';
 
 const userSummarySelect = {
   id: true,
@@ -306,7 +307,11 @@ export class WorkItemsService {
     return this.addCalculatedFields(workItem);
   }
 
-  async remove(id: string, currentUser: AuthenticatedUser): Promise<void> {
+  async assignMembers(
+    id: string,
+    assignWorkItemDto: AssignWorkItemDto,
+    currentUser: AuthenticatedUser,
+  ) {
     this.assertManager(currentUser);
 
     const workItem = await this.prisma.workItem.findUnique({
@@ -316,10 +321,19 @@ export class WorkItemsService {
 
       select: {
         id: true,
+        status: true,
 
-        attachment: {
+        assignments: {
           select: {
-            storagePath: true,
+            memberId: true,
+
+            member: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
           },
         },
       },
@@ -329,131 +343,176 @@ export class WorkItemsService {
       throw new NotFoundException('Work item not found');
     }
 
-    await this.prisma.workItem.delete({
-      where: {
-        id,
-      },
-    });
+    const requestedMemberIds = assignWorkItemDto.memberIds;
 
-    if (workItem.attachment) {
-      const absolutePath = this.resolveAttachmentPath(
-        workItem.attachment.storagePath,
+    const requestedMembers =
+      requestedMemberIds.length === 0
+        ? []
+        : await this.prisma.user.findMany({
+            where: {
+              id: {
+                in: requestedMemberIds,
+              },
+
+              role: Role.MEMBER,
+            },
+
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          });
+
+    if (requestedMembers.length !== requestedMemberIds.length) {
+      throw new BadRequestException(
+        'Every assignee must be an existing Member',
       );
-
-      await this.safeUnlink(absolutePath);
-    }
-  }
-
-  private buildWorkItemFilter(
-    currentUser: AuthenticatedUser,
-    query: WorkItemQueryDto,
-  ): Prisma.WorkItemWhereInput {
-    const filters: Prisma.WorkItemWhereInput[] = [];
-
-    if (query.status !== undefined) {
-      filters.push({
-        status: query.status,
-      });
     }
 
-    if (query.priority !== undefined) {
-      filters.push({
-        priority: query.priority,
-      });
+    const currentMemberIds = workItem.assignments.map(
+      (assignment) => assignment.memberId,
+    );
+
+    const currentMemberIdSet = new Set(currentMemberIds);
+
+    const requestedMemberIdSet = new Set(requestedMemberIds);
+
+    const addedMemberIds = requestedMemberIds.filter(
+      (memberId) => !currentMemberIdSet.has(memberId),
+    );
+
+    const removedMemberIds = currentMemberIds.filter(
+      (memberId) => !requestedMemberIdSet.has(memberId),
+    );
+
+    if (addedMemberIds.length === 0 && removedMemberIds.length === 0) {
+      throw new BadRequestException('The assignee list is unchanged');
     }
 
-    if (currentUser.role === Role.MANAGER && query.assigneeId !== undefined) {
-      filters.push({
-        assignments: {
-          some: {
-            memberId: query.assigneeId,
+    const nextStatus = this.calculateAssignmentStatus(
+      workItem.status,
+      requestedMemberIds.length,
+    );
+
+    const assignmentAction = this.getAssignmentActivityAction(
+      currentMemberIds.length,
+      requestedMemberIds.length,
+    );
+
+    const memberById = new Map(
+      requestedMembers.map((member) => [member.id, member]),
+    );
+
+    const previousMemberNames = workItem.assignments.map(
+      (assignment) => assignment.member.name,
+    );
+
+    const newMemberNames = requestedMemberIds.map(
+      (memberId) => memberById.get(memberId)?.name ?? memberId,
+    );
+
+    const addedMemberNames = addedMemberIds.map(
+      (memberId) => memberById.get(memberId)?.name ?? memberId,
+    );
+
+    const removedMemberNames = workItem.assignments
+      .filter((assignment) => removedMemberIds.includes(assignment.memberId))
+      .map((assignment) => assignment.member.name);
+
+    const returnedToBacklog =
+      nextStatus === WorkItemStatus.BACKLOG &&
+      workItem.status !== WorkItemStatus.BACKLOG;
+
+    await this.prisma.$transaction(async (transaction) => {
+      if (removedMemberIds.length > 0) {
+        await transaction.workItemAssignment.deleteMany({
+          where: {
+            workItemId: id,
+
+            memberId: {
+              in: removedMemberIds,
+            },
+          },
+        });
+      }
+
+      if (addedMemberIds.length > 0) {
+        await transaction.workItemAssignment.createMany({
+          data: addedMemberIds.map((memberId) => ({
+            workItemId: id,
+            memberId,
+            assignedById: currentUser.id,
+          })),
+        });
+      }
+
+      if (nextStatus !== workItem.status) {
+        await transaction.workItem.update({
+          where: {
+            id,
+          },
+
+          data: {
+            status: nextStatus,
+          },
+        });
+      }
+
+      await transaction.activity.create({
+        data: {
+          workItemId: id,
+          actorId: currentUser.id,
+          action: assignmentAction,
+
+          fromStatus:
+            nextStatus !== workItem.status ? workItem.status : undefined,
+
+          toStatus: nextStatus !== workItem.status ? nextStatus : undefined,
+
+          details: {
+            previousMemberIds: currentMemberIds,
+            previousMemberNames,
+            newMemberIds: requestedMemberIds,
+            newMemberNames,
+            addedMemberIds,
+            addedMemberNames,
+            removedMemberIds,
+            removedMemberNames,
           },
         },
       });
-    }
 
-    if (currentUser.role === Role.MEMBER) {
-      filters.push({
-        assignments: {
-          some: {
-            memberId: currentUser.id,
+      if (returnedToBacklog) {
+        await transaction.activity.create({
+          data: {
+            workItemId: id,
+            actorId: null,
+            action: ActivityAction.RETURNED_TO_BACKLOG,
+            fromStatus: workItem.status,
+            toStatus: WorkItemStatus.BACKLOG,
+
+            details: {
+              reason:
+                'The item was automatically returned to Backlog because all assignees were removed',
+            },
           },
-        },
-      });
-    }
+        });
+      }
+    });
 
-    if (filters.length === 0) {
-      return {};
-    }
-
-    return {
-      AND: filters,
-    };
-  }
-
-  private buildAccessibleItemFilter(
-    id: string,
-    currentUser: AuthenticatedUser,
-  ): Prisma.WorkItemWhereInput {
-    if (currentUser.role === Role.MANAGER) {
-      return {
-        id,
-      };
-    }
-
-    return {
-      id,
-
-      assignments: {
-        some: {
-          memberId: currentUser.id,
-        },
-      },
-    };
-  }
-
-  private async ensureItemExists(id: string): Promise<void> {
-    const workItem = await this.prisma.workItem.findUnique({
+    const updatedWorkItem = await this.prisma.workItem.findUnique({
       where: {
         id,
       },
-      select: {
-        id: true,
-      },
+      select: workItemDetailSelect,
     });
 
-    if (!workItem) {
+    if (!updatedWorkItem) {
       throw new NotFoundException('Work item not found');
     }
-  }
 
-  private assertManager(currentUser: AuthenticatedUser): void {
-    if (currentUser.role !== Role.MANAGER) {
-      throw new ForbiddenException('Only managers can perform this action');
-    }
-  }
-
-  private addCalculatedFields<T extends WorkItemForResponse>(workItem: T) {
-    return {
-      ...workItem,
-
-      attachment: workItem.attachment
-        ? {
-            ...workItem.attachment,
-            fileUrl: `/api/work-items/${workItem.id}/attachment`,
-          }
-        : null,
-
-      isOverdue: this.isOverdue(workItem),
-    };
-  }
-
-  private isOverdue(workItem: WorkItemWithDueDate): boolean {
-    const isComplete =
-      workItem.status === WorkItemStatus.DONE ||
-      workItem.status === WorkItemStatus.CANCELLED;
-
-    return !isComplete && workItem.dueDate < new Date();
+    return this.addCalculatedFields(updatedWorkItem);
   }
 
   async uploadAttachment(
@@ -674,6 +733,197 @@ export class WorkItemsService {
     );
 
     await this.safeUnlink(absolutePath);
+  }
+
+  async remove(id: string, currentUser: AuthenticatedUser): Promise<void> {
+    this.assertManager(currentUser);
+
+    const workItem = await this.prisma.workItem.findUnique({
+      where: {
+        id,
+      },
+
+      select: {
+        id: true,
+
+        attachment: {
+          select: {
+            storagePath: true,
+          },
+        },
+      },
+    });
+
+    if (!workItem) {
+      throw new NotFoundException('Work item not found');
+    }
+
+    await this.prisma.workItem.delete({
+      where: {
+        id,
+      },
+    });
+
+    if (workItem.attachment) {
+      const absolutePath = this.resolveAttachmentPath(
+        workItem.attachment.storagePath,
+      );
+
+      await this.safeUnlink(absolutePath);
+    }
+  }
+
+  // HELPERS
+  private calculateAssignmentStatus(
+    currentStatus: WorkItemStatus,
+    assigneeCount: number,
+  ): WorkItemStatus {
+    if (currentStatus === WorkItemStatus.BACKLOG && assigneeCount > 0) {
+      return WorkItemStatus.ASSIGNED;
+    }
+
+    if (this.isActiveAssignedStatus(currentStatus) && assigneeCount === 0) {
+      return WorkItemStatus.BACKLOG;
+    }
+
+    return currentStatus;
+  }
+
+  private isActiveAssignedStatus(status: WorkItemStatus): boolean {
+    const statusesWithAssignments: WorkItemStatus[] = [
+      WorkItemStatus.ASSIGNED,
+      WorkItemStatus.IN_PROGRESS,
+      WorkItemStatus.IN_REVIEW,
+    ];
+
+    return statusesWithAssignments.includes(status);
+  }
+
+  private getAssignmentActivityAction(
+    previousCount: number,
+    nextCount: number,
+  ): ActivityAction {
+    if (previousCount === 0 && nextCount > 0) {
+      return ActivityAction.MEMBERS_ASSIGNED;
+    }
+
+    if (nextCount === 0) {
+      return ActivityAction.MEMBERS_REMOVED;
+    }
+
+    return ActivityAction.MEMBERS_REASSIGNED;
+  }
+
+  private buildWorkItemFilter(
+    currentUser: AuthenticatedUser,
+    query: WorkItemQueryDto,
+  ): Prisma.WorkItemWhereInput {
+    const filters: Prisma.WorkItemWhereInput[] = [];
+
+    if (query.status !== undefined) {
+      filters.push({
+        status: query.status,
+      });
+    }
+
+    if (query.priority !== undefined) {
+      filters.push({
+        priority: query.priority,
+      });
+    }
+
+    if (currentUser.role === Role.MANAGER && query.assigneeId !== undefined) {
+      filters.push({
+        assignments: {
+          some: {
+            memberId: query.assigneeId,
+          },
+        },
+      });
+    }
+
+    if (currentUser.role === Role.MEMBER) {
+      filters.push({
+        assignments: {
+          some: {
+            memberId: currentUser.id,
+          },
+        },
+      });
+    }
+
+    if (filters.length === 0) {
+      return {};
+    }
+
+    return {
+      AND: filters,
+    };
+  }
+
+  private buildAccessibleItemFilter(
+    id: string,
+    currentUser: AuthenticatedUser,
+  ): Prisma.WorkItemWhereInput {
+    if (currentUser.role === Role.MANAGER) {
+      return {
+        id,
+      };
+    }
+
+    return {
+      id,
+
+      assignments: {
+        some: {
+          memberId: currentUser.id,
+        },
+      },
+    };
+  }
+
+  private async ensureItemExists(id: string): Promise<void> {
+    const workItem = await this.prisma.workItem.findUnique({
+      where: {
+        id,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!workItem) {
+      throw new NotFoundException('Work item not found');
+    }
+  }
+
+  private assertManager(currentUser: AuthenticatedUser): void {
+    if (currentUser.role !== Role.MANAGER) {
+      throw new ForbiddenException('Only managers can perform this action');
+    }
+  }
+
+  private addCalculatedFields<T extends WorkItemForResponse>(workItem: T) {
+    return {
+      ...workItem,
+
+      attachment: workItem.attachment
+        ? {
+            ...workItem.attachment,
+            fileUrl: `/api/work-items/${workItem.id}/attachment`,
+          }
+        : null,
+
+      isOverdue: this.isOverdue(workItem),
+    };
+  }
+
+  private isOverdue(workItem: WorkItemWithDueDate): boolean {
+    const isComplete =
+      workItem.status === WorkItemStatus.DONE ||
+      workItem.status === WorkItemStatus.CANCELLED;
+
+    return !isComplete && workItem.dueDate < new Date();
   }
 
   private resolveAttachmentPath(storagePath: string): string {
