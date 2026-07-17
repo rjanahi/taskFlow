@@ -8,8 +8,10 @@
    "scripts": {
       "dev:web": "npm run dev --workspace=web",
       "dev:api": "npm run start:dev --workspace=api",
+      "lint": "npm run lint --workspaces --if-present",
       "build": "npm run build --workspaces --if-present",
-      "test": "npm run test --workspaces --if-present"
+      "test": "npm run test --workspaces --if-present",
+      "verify": "npm run lint && npm run test && npm run build"
    },
    "repository": {
       "type": "git",
