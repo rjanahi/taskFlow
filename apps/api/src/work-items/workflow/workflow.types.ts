@@ -1,0 +1,8 @@
+export enum WorkflowAction {
+  START = 'START',
+  SUBMIT_REVIEW = 'SUBMIT_REVIEW',
+  ACCEPT = 'ACCEPT',
+  SEND_BACK = 'SEND_BACK',
+  CANCEL = 'CANCEL',
+  REOPEN = 'REOPEN',
+}
