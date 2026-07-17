@@ -5,8 +5,8 @@ services:
     restart: unless-stopped
 
     environment:
-      POSTGRES_USER: taskflow
-      POSTGRES_PASSWORD: taskflow_password
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
       POSTGRES_DB: taskflow
 
     ports:
